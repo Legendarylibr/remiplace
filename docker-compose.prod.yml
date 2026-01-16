@@ -1,0 +1,72 @@
+# ============================================================================
+# (r) EMI / Place - Production Docker Compose Override
+# 
+# Usage: docker-compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+# Scaled: docker-compose -f docker-compose.yml -f docker-compose.prod.yml up -d --scale app=3
+# ============================================================================
+
+version: '3.8'
+
+services:
+  app:
+    # Don't expose ports directly in production - use nginx
+    # The base compose ports are overridden by not being accessible externally
+    expose:
+      - "3001"
+    environment:
+      - NODE_ENV=production
+    deploy:
+      mode: replicated
+      replicas: 2
+      resources:
+        limits:
+          memory: 1G
+        reservations:
+          memory: 256M
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 3
+        window: 120s
+      update_config:
+        parallelism: 1
+        delay: 10s
+        failure_action: rollback
+        order: start-first
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  redis:
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+        reservations:
+          memory: 128M
+
+  nginx:
+    image: nginx:alpine
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      # Uncomment for HTTPS - create ssl/ directory with cert.pem and key.pem
+      # - ./ssl:/etc/nginx/ssl:ro
+    depends_on:
+      - app
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+        reservations:
+          memory: 32M
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"

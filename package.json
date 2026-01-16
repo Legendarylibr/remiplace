@@ -1,0 +1,20 @@
+{
+  "name": "romelia-house",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Token-gated collaborative pixel canvas",
+  "scripts": {
+    "start": "node server/index.js",
+    "dev": "node server/index.js",
+    "dev:reset": "node scripts/dev.js",
+    "build": "NODE_ENV=production node scripts/build.js",
+    "build:dev": "node scripts/build.js",
+    "postinstall": "cd server && npm install"
+  },
+  "devDependencies": {
+    "esbuild": "^0.20.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

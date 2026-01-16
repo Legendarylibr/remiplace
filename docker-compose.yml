@@ -1,0 +1,100 @@
+# ============================================================================
+# (r) EMI / Place - Docker Compose Configuration
+# 
+# Usage:
+#   Development:  docker-compose up
+#   Production:   docker-compose -f docker-compose.yml -f docker-compose.prod.yml up
+#   Scaled:       docker-compose up --scale app=3
+# ============================================================================
+
+version: '3.8'
+
+services:
+  # ==========================================================================
+  # Main Application
+  # ==========================================================================
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    # In dev, expose port directly. In prod, use docker-compose.prod.yml with nginx
+    ports:
+      - "${APP_PORT:-3001}:3001"
+    environment:
+      - NODE_ENV=production
+      - PORT=3001
+      - DATABASE_PATH=/app/server/data/canvas.db
+      - JWT_SECRET=${JWT_SECRET:-change-this-in-production}
+      - REDIS_ENABLED=true
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+    volumes:
+      # Persist database
+      - canvas-data:/app/server/data
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3001/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+        reservations:
+          memory: 128M
+
+  # ==========================================================================
+  # Redis - For cross-instance communication
+  # ==========================================================================
+  redis:
+    image: redis:7-alpine
+    # Only expose internally - never expose Redis externally in production
+    expose:
+      - "6379"
+    volumes:
+      - redis-data:/data
+    command: redis-server --appendonly yes --maxmemory 128mb --maxmemory-policy allkeys-lru
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+        reservations:
+          memory: 64M
+
+  # ==========================================================================
+  # Nginx Load Balancer (for scaled deployments)
+  # Uncomment when running multiple app instances
+  # ==========================================================================
+  # nginx:
+  #   image: nginx:alpine
+  #   ports:
+  #     - "80:80"
+  #   volumes:
+  #     - ./nginx.conf:/etc/nginx/nginx.conf:ro
+  #   depends_on:
+  #     - app
+  #   restart: unless-stopped
+
+volumes:
+  canvas-data:
+    driver: local
+  redis-data:
+    driver: local
+
+# ==========================================================================
+# Networks
+# ==========================================================================
+networks:
+  default:
+    driver: bridge
