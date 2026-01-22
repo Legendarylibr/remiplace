@@ -4,8 +4,8 @@
  */
 
 import Database from 'better-sqlite3';
-import { mkdirSync, existsSync, accessSync, constants } from 'fs';
-import { dirname } from 'path';
+import { mkdirSync, existsSync, writeFileSync, unlinkSync, readFileSync } from 'fs';
+import { dirname, join } from 'path';
 import config from '../config/index.js';
 import logger from '../utils/logger.js';
 
@@ -19,26 +19,85 @@ let stmt = null;
 let dbInitialized = false;
 
 /**
- * Wait for directory to be writable (Railway volume mount)
+ * Test if a directory is writable by actually writing a file
  */
-async function waitForDirectory(dirPath, maxRetries = 30, retryDelayMs = 1000) {
+function testWriteAccess(dirPath) {
+  const testFile = join(dirPath, '.write-test-' + Date.now());
+  try {
+    writeFileSync(testFile, 'test');
+    unlinkSync(testFile);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Find a writable database directory
+ */
+async function findWritableDirectory(maxRetries = 60, retryDelayMs = 1000) {
+  // Potential paths in order of preference
+  const potentialPaths = [
+    process.env.DATABASE_PATH ? dirname(process.env.DATABASE_PATH) : null,
+    process.env.RAILWAY_VOLUME_MOUNT_PATH,
+    '/data',
+    '/app/data',
+    '/tmp/data',  // Fallback to tmp if nothing else works
+  ].filter(Boolean);
+
+  logger.info({ paths: potentialPaths, env: process.env.NODE_ENV }, 'Searching for writable database directory...');
+
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
-    try {
-      if (!existsSync(dirPath)) {
-        mkdirSync(dirPath, { recursive: true });
-      }
-      // Test if directory is writable
-      accessSync(dirPath, constants.W_OK);
-      logger.info({ path: dirPath, attempt }, 'Database directory ready');
-      return true;
-    } catch (err) {
-      logger.warn({ path: dirPath, attempt, maxRetries, error: err.message }, 'Waiting for database directory...');
-      if (attempt < maxRetries) {
-        await new Promise(resolve => setTimeout(resolve, retryDelayMs));
+    for (const dirPath of potentialPaths) {
+      try {
+        // Try to create directory if it doesn't exist
+        if (!existsSync(dirPath)) {
+          mkdirSync(dirPath, { recursive: true });
+        }
+        
+        // Test actual write access
+        if (testWriteAccess(dirPath)) {
+          logger.info({ path: dirPath, attempt }, 'Found writable database directory');
+          return dirPath;
+        }
+      } catch (err) {
+        // Continue to next path
       }
     }
+    
+    if (attempt < maxRetries) {
+      logger.warn({ attempt, maxRetries }, 'No writable directory found, waiting for volume mount...');
+      await new Promise(resolve => setTimeout(resolve, retryDelayMs));
+    }
   }
-  throw new Error(`Database directory ${dirPath} not available after ${maxRetries} attempts`);
+  
+  throw new Error(`No writable database directory found after ${maxRetries} attempts. Tried: ${potentialPaths.join(', ')}`);
+}
+
+/**
+ * Load embedded backup data if available
+ */
+function loadEmbeddedBackup() {
+  const backupPaths = [
+    join(process.cwd(), 'canvas-backup.json'),
+    join(process.cwd(), '..', 'canvas-backup.json'),
+    '/app/canvas-backup.json',
+  ];
+  
+  for (const path of backupPaths) {
+    try {
+      if (existsSync(path)) {
+        const data = JSON.parse(readFileSync(path, 'utf-8'));
+        if (data.pixels && Array.isArray(data.pixels)) {
+          logger.info({ path, pixelCount: data.pixels.length }, 'Found backup file');
+          return data;
+        }
+      }
+    } catch (err) {
+      logger.warn({ path, error: err.message }, 'Failed to load backup');
+    }
+  }
+  return null;
 }
 
 /**
@@ -47,14 +106,13 @@ async function waitForDirectory(dirPath, maxRetries = 30, retryDelayMs = 1000) {
 async function initDatabase() {
   if (dbInitialized) return db;
   
-  const dbDir = dirname(config.database.path);
+  // Find a writable directory
+  const dbDir = await findWritableDirectory();
+  const dbPath = join(dbDir, 'canvas.db');
   
-  // Wait for volume to be mounted (Railway-specific)
-  await waitForDirectory(dbDir);
+  logger.info({ path: dbPath }, 'Initializing database...');
   
-  logger.info({ path: config.database.path }, 'Initializing database...');
-  
-  db = new Database(config.database.path);
+  db = new Database(dbPath);
   db.pragma('journal_mode = WAL');
   db.pragma('foreign_keys = ON');
   db.pragma('synchronous = NORMAL');
@@ -87,14 +145,31 @@ async function initDatabase() {
     pruneHistory: db.prepare('DELETE FROM pixel_history WHERE id <= (SELECT id FROM pixel_history ORDER BY id DESC LIMIT 1 OFFSET ?)'),
   };
   
-  // Init cache
+  // Load existing pixels into cache
   const rows = db.prepare('SELECT x, y, color, placed_by, placed_at FROM pixels').all();
   rows.forEach(p => cache.pixels.set(`${p.x},${p.y}`, p));
   cache.count = rows.length;
   cache.initialized = true;
   
+  // Auto-import backup if database is empty
+  if (cache.count === 0) {
+    const backup = loadEmbeddedBackup();
+    if (backup && backup.pixels.length > 0) {
+      logger.info({ pixelCount: backup.pixels.length }, 'Database empty, importing backup...');
+      const importTx = db.transaction((pixels) => {
+        for (const p of pixels) {
+          stmt.setPixel.run(p.x, p.y, p.color, null);
+          cache.pixels.set(`${p.x},${p.y}`, { x: p.x, y: p.y, color: p.color, placed_by: null, placed_at: new Date().toISOString() });
+        }
+      });
+      importTx(backup.pixels);
+      cache.count = backup.pixels.length;
+      logger.info({ pixelCount: cache.count }, 'Backup imported successfully');
+    }
+  }
+  
   dbInitialized = true;
-  logger.info({ pixels: rows.length }, 'Database initialized, cache loaded');
+  logger.info({ pixels: cache.count }, 'Database initialized, cache loaded');
   
   return db;
 }
@@ -104,7 +179,7 @@ export { initDatabase };
 
 // History pruning configuration
 const HISTORY_MAX_ENTRIES = 100000;
-const PRUNE_CHECK_INTERVAL = 500; // Check every N placements
+const PRUNE_CHECK_INTERVAL = 500;
 let placementsSincePrune = 0;
 
 // Lazy-initialized transaction functions
@@ -244,7 +319,6 @@ export function closeDatabase() {
   catch (e) { logger.error({ err: e }, 'Close error'); return false; }
 }
 
-// Export a getter for db (for advanced use cases)
 export function getDb() {
   ensureInitialized();
   return db;

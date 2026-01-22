@@ -59,6 +59,9 @@ COPY --from=server-builder /app/server/node_modules ./server/node_modules
 COPY --from=client-builder /app/dist ./dist/
 COPY --from=client-builder /app/index.html ./
 
+# Copy backup file for initial import (optional - won't fail if missing)
+COPY canvas-backup.jso[n] ./
+
 # Set correct permissions (volume will be mounted at /data)
 RUN chown -R nodejs:nodejs /app
 
