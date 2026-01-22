@@ -10,6 +10,7 @@ import { getPrometheusMetrics, getMetricsJSON } from '../services/metrics.js';
 import { getBackupStats, createBackup, listBackups } from '../services/backup.js';
 import { requireAdmin, authenticateToken } from '../middleware/auth.js';
 import { asyncHandler } from '../middleware/errorHandler.js';
+import canvasService from '../services/canvas.js';
 
 const router = Router();
 
@@ -38,6 +39,26 @@ router.get('/admin/backups', authenticateToken, requireAdmin, asyncHandler(async
 router.post('/admin/backups', authenticateToken, requireAdmin, asyncHandler(async (req, res) => {
   const path = createBackup();
   res.json(path ? { success: true, path } : { success: false, error: 'Backup failed' });
+}));
+
+// Bootstrap endpoint - only works when database is empty (safe one-time import)
+router.post('/bootstrap', asyncHandler(async (req, res) => {
+  const stats = canvasService.getStats();
+  
+  if (stats.total_pixels > 0) {
+    return res.status(403).json({ 
+      error: 'Canvas already has data. Bootstrap only works on empty database.',
+      current_pixels: stats.total_pixels
+    });
+  }
+  
+  const { pixels } = req.body;
+  if (!pixels || !Array.isArray(pixels)) {
+    return res.status(400).json({ error: 'Invalid format: expected { pixels: [...] }' });
+  }
+  
+  const result = canvasService.importCanvas(pixels);
+  res.json({ success: true, ...result, message: 'Bootstrap import complete' });
 }));
 
 export default router;

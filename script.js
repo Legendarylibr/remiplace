@@ -43,7 +43,9 @@ class App {
       canvasSize: document.getElementById('canvas-size'),
       pixelCount: document.getElementById('pixel-count'),
       eraserSection: document.getElementById('eraser-section'),
-      eraserBtn: document.getElementById('eraser-btn')
+      eraserBtn: document.getElementById('eraser-btn'),
+      zoomDisplay: document.getElementById('zoom-display'),
+      zoomLevel: document.getElementById('zoom-level')
     };
     
     this._init();
@@ -64,6 +66,10 @@ class App {
     this.canvas.onPixelPlace = (x, y, color) => {
       this._updatePixelCounter();
       wsClient.sendPixel(x, y, color);
+    };
+    
+    this.canvas.onZoomChange = (zoom) => {
+      this._updateZoomDisplay(zoom);
     };
     
     this._updatePixelCounter();
@@ -206,13 +212,14 @@ class App {
     });
     
     this.el.eraserBtn?.addEventListener('click', () => this._toggleEraser());
+    this.el.zoomDisplay?.addEventListener('click', () => this.canvas.cycleZoom());
     window.addEventListener('auth:expired', () => { this.isAuthorized = this.isAdmin = false; this._updateUI(); });
   }
   
   _toggleEraser() {
     if (!this.isAdmin) return;
     this.eraserMode = !this.eraserMode;
-    this.canvas.eraserMode = this.eraserMode;
+    this.canvas.setEraserMode(this.eraserMode);
     this.el.eraserBtn?.classList.toggle('active', this.eraserMode);
     if (this.eraserMode) this.el.palette.querySelectorAll('.palette-btn').forEach(b => b.classList.remove('selected'));
     this.el.canvasElement.style.cursor = this.eraserMode ? 'cell' : 'crosshair';
@@ -221,7 +228,7 @@ class App {
   _disableEraser() {
     if (!this.eraserMode) return;
     this.eraserMode = false;
-    this.canvas.eraserMode = false;
+    this.canvas.setEraserMode(false);
     this.el.eraserBtn?.classList.remove('active');
     this.el.canvasElement.style.cursor = 'crosshair';
   }
@@ -397,6 +404,13 @@ class App {
     }
     this.el.pixelCount.textContent = count.toLocaleString();
     this.canvasStatus.pixelCount = count;
+  }
+  
+  _updateZoomDisplay(zoom) {
+    if (!this.el.zoomLevel) return;
+    const displayZoom = zoom >= 1 ? `${Math.round(zoom)}×` : `${zoom.toFixed(1)}×`;
+    this.el.zoomLevel.textContent = displayZoom;
+    this.el.zoomDisplay?.classList.toggle('zoomed', zoom !== 1);
   }
   
   _updateCanvasStatus(status) {
