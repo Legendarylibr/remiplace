@@ -16,7 +16,7 @@ import routes from './routes/index.js';
 import { generalLimiter } from './middleware/rateLimit.js';
 import { errorHandler, notFoundHandler } from './middleware/errorHandler.js';
 import { initWebSocket, getClientCount, closeAll as closeWebSockets } from './websocket/index.js';
-import { closeDatabase, databaseAPI } from './models/database.js';
+import { closeDatabase, databaseAPI, initDatabase } from './models/database.js';
 import logger, { requestLogger } from './utils/logger.js';
 import { metricsMiddleware } from './services/metrics.js';
 import { startAutoBackup, stopAutoBackup } from './services/backup.js';
@@ -102,6 +102,9 @@ app.use('/api', notFoundHandler);
 app.use(errorHandler);
 
 async function start() {
+  // Initialize database first (waits for Railway volume mount)
+  await initDatabase();
+  
   await initWebSocket(server);
   if (config.nodeEnv === 'production') startAutoBackup();
   

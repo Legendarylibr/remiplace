@@ -2,4 +2,4 @@
  * Models Exports
  */
 
-export { default as db, databaseAPI } from './database.js';
+export { databaseAPI, initDatabase, closeDatabase, getDb } from './database.js';
