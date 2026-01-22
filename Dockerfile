@@ -59,9 +59,8 @@ COPY --from=server-builder /app/server/node_modules ./server/node_modules
 COPY --from=client-builder /app/dist ./dist/
 COPY --from=client-builder /app/index.html ./
 
-# Create data directory with correct permissions
-RUN mkdir -p /app/server/data && \
-    chown -R nodejs:nodejs /app
+# Set correct permissions (volume will be mounted at /data)
+RUN chown -R nodejs:nodejs /app
 
 # Switch to non-root user
 USER nodejs

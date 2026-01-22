@@ -9,12 +9,30 @@ import { dirname, join } from 'path';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 dotenv.config({ path: join(__dirname, '..', '.env') });
 
+// Determine database path with Railway volume support
+function getDatabasePath() {
+  // Explicit path takes priority
+  if (process.env.DATABASE_PATH) {
+    return process.env.DATABASE_PATH;
+  }
+  // Railway volume mount path (if set by Railway)
+  if (process.env.RAILWAY_VOLUME_MOUNT_PATH) {
+    return join(process.env.RAILWAY_VOLUME_MOUNT_PATH, 'canvas.db');
+  }
+  // Production: use /data which is a common Railway volume mount
+  if (process.env.NODE_ENV === 'production') {
+    return '/data/canvas.db';
+  }
+  // Development: use local data directory
+  return join(__dirname, '..', 'data', 'canvas.db');
+}
+
 const config = {
   port: parseInt(process.env.PORT || '3001', 10),
   nodeEnv: process.env.NODE_ENV || 'development',
   
   database: {
-    path: process.env.DATABASE_PATH || join(__dirname, '..', 'data', 'canvas.db'),
+    path: getDatabasePath(),
   },
   
   jwt: {
